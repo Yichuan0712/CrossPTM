@@ -1,0 +1,154 @@
+fix_seed: 0
+
+MHA_head: 8
+crossattention: True
+task: linear_mix # prompt_value or random or random_from_embedding_table
+task_shape: 100
+task_dimension: 1280
+task_number: 8
+initialization_method: USE_ONLY_TASK_IS_RANDOM # Gaussianor Uniform
+multi_GPU: False
+
+linear_mix_temperature: 1.2
+linear_mix_task_dim: 256
+linear_mix_hidden: 256
+linear_mix_dropout: 0.0
+linear_mix_use_layernorm: True
+linear_mix_mask_token_ids: [1]  #[0, 1, 2, 3, 29, 30, 31, 32]
+
+encoder:
+  model_name: facebook/esm2_t33_650M_UR50D    #  esmc_600m  #facebook/esm2_t33_650M_UR50D # facebook/esm2_t33_650M_UR50D, facebook/esm2_t30_150M_UR50D, facebook/esm2_t12_35M_UR50D, facebook/esm2_t6_8M_UR50D, Rostlab/prot_t5_base_mt_uniref50
+  max_len: 1024
+  tune_embedding: False
+  adapter_h:
+    enable: True
+    num_end_adapter_layers: [12,6]
+    module_type: "MLP1"
+    freeze_adapter_layers: [True,False]
+  fine_tune:
+    enable: False
+    last_layers_trainable: 2
+    freeze_adapter_layers: [True]
+  lora:
+    enable: False
+    r: 2
+    lora_alpha: 8
+    lora_dropout: 0.05
+    esm_num_end_lora: 33
+  prompt:
+    enable: False
+    prompt_addition_enable: False
+    prompt_predefined_enable: True
+    prompt_len: 500
+    prompt_layer_indices: [0]
+    num_tasks: 8
+    task_token_path: ./data/2_task_embedding
+    if_pass_to_MHA: False
+    if_attention_masks: False
+    if_weighted_skip_connection: False
+    if_grads: True
+  input_type: protein_sequence #peptide  or protein_sequence
+  num_classes: 2
+  head_dropout: 0.2
+  mlp_hidden_dim: 100
+  mlp_layer_num: 2
+
+projector:
+  projector_type: Co_attention_tranception #Sequential_Bidirectional_Tranception  #Sequential_Bidirectional_Tranception Tranception  #MHACustomplusCNNplusResidualNetwork #attention_CNN_reverse #MHACustomplusCNNplusResidualNetwork or CNN or MLP or Transformer MHACustom or MHACustomplusCNN MapAttention or MHACustomplusCNNplusResidualNetwork
+  droprate: 0.75
+  kernel_sizes: [1,9,11,1]
+  out_channels: 200
+  output_dim: 0
+  inner_linear_dim: 128
+  num_layers: 2
+  if_flattern: False
+  if_frozen: False
+  if_multihead: False
+  output_layer: binary_two_type #multi_each_type or multi_three_type
+
+task_specific_parameters:
+  if_frozen: False
+
+train_settings:
+  data_path: ./data/DeepMVP/our_new_data/new_train  #todo #/mnt/pixstor/data/yz3qt/PTM_yichuan/data/DeepMVP/our_new_data/new_train  #todo /mnt/pixstor/data/yz3qt/PTM_yichuan/data/
+  num_epochs: 1000
+  shuffle: True
+  loss: crossentropy # crossentropy or focal
+  sample_weight: False
+  mixed_precision: fp16 # no, fp16, bf16, fp8
+  device: cuda
+  batch_size: 3 #todo 6  64
+  num_workers: 0
+  grad_accumulation: 1
+  chunk: True
+  average_sampling: False  #True:sample all types in one batch;False no sampling
+  total_batches: 4256
+  batch_size_for_each_batch: 1
+
+  loss_calculation: main_loss #main_loss #or intra_and_inter_loss or max_entropy_loss
+  lambda_ent: 0.1
+
+  multitask_loss_calculation: task_weighted   #task_weighted or GradNorm or None
+  eary_stop_patience: 5
+
+valid_settings:
+  data_path: ./data/DeepMVP/our_new_data/validation   #todo   #todo
+  do_every: 1
+  batch_size: 14
+  device: cuda
+  num_workers: 0
+  chunk: True
+
+test_settings:
+  data_path: ./data/DeepMVP/our_new_data/test   #todo
+  batch_size: 1
+  device: cuda
+  num_workers: 0
+  chunk: False
+
+optimizer:
+  name: adam
+  lr: 1e-4   #todo
+  weight_decouple: True
+  weight_decay: 1e-2
+  eps: 1e-16
+  beta_1: 0.9
+  beta_2: 0.999
+  use_8bit_adam: False
+  grad_clip_norm: 1
+  decay:
+    warmup: 128
+    min_lr: 1e-5   #0
+    gamma: 1
+    num_restarts: 1
+    first_cycle_steps: null # null or an integer number (ignore num_restarts)  #200
+
+tasks:   #todo 7
+  Phosphorylation_ST: True
+  Phosphorylation_Y: True
+  Ubiquitination_K: True
+  Acetylation_K: True
+  Methylation_K: True
+  Sumoylation_K: True
+  Methylation_R: True
+  NlinkedGlycosylation_N: True
+
+task_ids:   #todo 8
+  Phosphorylation_ST: 0
+  Phosphorylation_Y: 1
+  Ubiquitination_K: 2
+  Acetylation_K: 3
+  Methylation_K: 4
+  Sumoylation_K: 5
+  Methylation_R: 6
+  NlinkedGlycosylation_N: 7
+
+bam:
+  model: teacher  #teacher or student
+  write_distill_outputs: False
+  teacher_annealing: False
+  teacher_distill_output_path: ./new_uniprot_data/16-splm_tasktoken(full_sequence)_distill_output/
+  distill_weight: 1   #todo 9
+  dataset_multiples: False
+  task_weight_exponent: 0.5
+
