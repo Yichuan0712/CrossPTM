@@ -12,6 +12,8 @@ import numpy as np
 import umap
 import matplotlib.pyplot as plt
 from box import Box
+
+# device: CPU or GPU
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
@@ -19,7 +21,8 @@ def remove_label(tensor, output, label):
     mask = tensor != label
     return tensor[mask], output[mask]
 
-def plot_prompt(prompt_layer_dict,epoch, result_path):
+
+def plot_prompt(prompt_layer_dict, epoch, result_path):
 
     # 1) collect the data
     data = np.concatenate([
@@ -34,8 +37,12 @@ def plot_prompt(prompt_layer_dict,epoch, result_path):
     ])
 
     # 3) UMAP
-    umap_model = umap.UMAP(n_neighbors=15, min_dist=0.1,
-                          n_components=2, random_state=42)
+    umap_model = umap.UMAP(
+        n_neighbors=15,
+        min_dist=0.1,
+        n_components=2,
+        random_state=42
+    )
     umap_result = umap_model.fit_transform(data)
 
     # 4) Plot
@@ -51,7 +58,7 @@ def plot_prompt(prompt_layer_dict,epoch, result_path):
     plt.colorbar(scatter, label='Task ID')
 
     # 5) ensure output dir exists
-    out_dir = os.path.join(result_path,'prompt_figure', f'epoch {str(epoch)}')
+    out_dir = os.path.join(result_path, 'prompt_figure', f'epoch {str(epoch)}')
     os.makedirs(out_dir, exist_ok=True)
 
     # 6) save
@@ -60,7 +67,7 @@ def plot_prompt(prompt_layer_dict,epoch, result_path):
     plt.close()
 
 
-def predict(dataloader,net):
+def predict(dataloader, net):
     counter = 0
     progress_bar = tqdm(range(len(dataloader)))
     progress_bar.set_description("Steps")
@@ -70,54 +77,67 @@ def predict(dataloader,net):
     position_results = []
 
     for i, data in enumerate(dataloader):
-        prot_id, sequences, masks, task_ids,indices = data
+        prot_id, sequences, masks, task_ids, indices = data
+
+        # ---- move everything needed to the same device ----
+        sequences = sequences.to(device)
+        masks = masks.to(device)
+        task_ids = task_ids.to(device)
+
         with torch.inference_mode():
-            outputs = net(sequences.to(device), task_ids.to(device))   # # x_contact,batch, length, out_channels
+            # x_contact, batch, length, out_channels
+            outputs = net(sequences, task_ids)
+
+            # boolean / 0-1 mask is now on the same device as outputs
             preds = outputs[masks]
             if preds.numel() == 0:
                 continue
 
-            indices = (masks[0] == 1).nonzero(as_tuple=True)[0].tolist()
-            positions = [v + 1 for v in indices]
+            # compute positions from mask
+            pos_idx = (masks[0] == 1).nonzero(as_tuple=True)[0].tolist()
+            positions = [v + 1 for v in pos_idx]
+
             preds = F.softmax(preds, dim=-1)[:, 1]
             rounded_preds = [round(v, 3) for v in preds.tolist()]
             prediction_results.extend(rounded_preds)
             position_results.extend(positions)
 
-            for i in range(len(positions)):
+            for _ in range(len(positions)):
                 prot_id_results.append(prot_id[0])
-
 
         counter += 1
         progress_bar.update(1)
 
-
-    return prediction_results,prot_id_results,position_results
+    return prediction_results, prot_id_results, position_results
 
 
 def main(args, dict_config):
     configs = Box(dict_config)
 
-    if type(configs.fix_seed) == int:
+    if isinstance(configs.fix_seed, int):
         torch.manual_seed(configs.fix_seed)
         torch.random.manual_seed(configs.fix_seed)
         np.random.seed(configs.fix_seed)
 
     torch.cuda.empty_cache()
 
-    dataloaders_dict= prepare_dataloaders_ptm(args,configs)
+    dataloaders_dict = prepare_dataloaders_ptm(args, configs)
     net = prepare_models_secondary_structure_ptm(configs)
 
+    # ---- move model to the same device as we use for data ----
+    net.to(device)
+
+    # load checkpoint on the same device
     model_checkpoint = torch.load(args.model_path, map_location=device, weights_only=False)
     net.load_state_dict(model_checkpoint['model_state_dict'])
 
     for i, (task_name, dataloader) in enumerate(dataloaders_dict['test'].items()):
         net.eval()
         start_time = time()
-        prediction_results,prot_id_results,position_results  = predict(dataloader, net)
+        prediction_results, prot_id_results, position_results = predict(dataloader, net)
         end_time = time()
 
-        ##save prediction results into csv
+        # save prediction results into csv
         result_dic = {
             "prot_id": prot_id_results,
             "position": position_results,
@@ -125,8 +145,9 @@ def main(args, dict_config):
         }
 
         df = pd.DataFrame(result_dic)
-        df.to_csv(os.path.join(args.save_path, task_name + '_test_output.csv'))
-        print("The predicion has been saved in " + os.path.join(args.save_path, task_name + '_test_output.csv' + "."))
+        save_path = os.path.join(args.save_path, task_name + '_test_output.csv')
+        df.to_csv(save_path, index=False)
+        print("The prediction has been saved in " + save_path + ".")
 
         print("prediction time:", end_time - start_time)
 
@@ -136,12 +157,11 @@ def main(args, dict_config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Inference")
-    parser.add_argument("--config_filename", "-c",default='config/test.yaml')
+    parser.add_argument("--config_filename", "-c", default='config/test.yaml')
     parser.add_argument("--model_path", default='checkpoints/best_model_yichuan.pth')
     parser.add_argument("--data_path", default='data/Phosphorylation_ST_sequence.fasta')
     parser.add_argument("--save_path", default='data')
-    parser.add_argument("--PTM_type",default='Phosphorylation_ST')
-
+    parser.add_argument("--PTM_type", default='Phosphorylation_ST')
 
     args = parser.parse_args()
 
